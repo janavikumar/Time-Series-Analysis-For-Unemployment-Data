@@ -1,0 +1,116 @@
+---
+title: "174 Project"
+author: "Arthur Hla"
+date: "11/16/2018"
+output: pdf_document
+---
+
+```{r}
+library(MASS)
+library(forecast)
+library(ggplot2)
+library(astsa)
+library(tseries)
+library(TSA)
+library(GeneCycle)
+```
+
+#let Unemployment be {Yt}
+```{r}
+data <- read.csv("Data.csv")
+ts.data <-ts (data[,2] , frequency=12)
+
+#
+plot(ts.data, xlab= "Time" , ylab="Unemployment for Males" , main= "Monthly Timeseries plot for Monthly U.S. male (16-19 years) unemployment" )
+
+```
+
+# Seasonal Plot
+```{r}
+seasonplot(ts.data, 12, col=rainbow (3) , year.labels=TRUE, main= "Seasonal Plot")
+```
+
+#decomposition plot
+```{r}
+decom <-  decompose(ts.data)
+autoplot(decom, main= "Decomposition Plot" ) +
+theme ( axis.text.y = element_text(size =6), text = element_text(size=10)) +
+xlab ( "Time in years" )
+```
+
+#stablize variance using (box−cox,etc)
+```{r}
+data.box <- boxcox(ts.data~as.numeric(1:length(ts.data)))
+(lamda <- data.box$x[which.max(data.box$y)])
+data.transformation <- ts.data^lamda 
+```
+
+# make sample set : drop last 10 data for later comparison of forecasting
+# plot the transformed time series
+```{r}
+ts.data.minus.10 <- ts(data.transformation[1:(length(ts.data)-12)]) #399
+plot (ts.data.minus.10, xlab="Time", ylab="", main= expression( Unemployment^0.2626263)) 
+title(ylab=expression (X[t]^0.2626263) , line=2)
+```
+
+# ACF
+```{r}
+acf(ts.data.minus.10, main= "ACF of Box−Cox Transformed Data" )
+```
+
+# Deseasonalize, our variance went down
+```{r}
+data.diff.12 <-  diff(ts.data.minus.10, lag=12)
+plot ( data.diff.12, xlab="Time", ylab="" , main=expression (nabla[12]~"Transformed Data") )
+title (ylab=expression (nabla[12]~X[t]^26262623), line=2)
+abline (lm(data.diff.12~as.numeric (1:length(data.diff.12))))
+var (data.diff.12)
+var(ts.data.minus.10)
+```
+
+# De-trend
+```{r}
+data.diff.12.diff.1 <- diff(data.diff.12, lag=1)
+plot(data.diff.12.diff.1 , xlab="Time", ylab="", main=expression (nabla~nabla[12]~"Transformed Data") )
+abline(lm(data.diff.12.diff.1~as.numeric(1:length(data.diff.12.diff.1))))
+var(data.diff.12.diff.1)
+title(ylab=expression(nabla~nabla[12]~X[t]^2626263) , line=2)
+```
+
+#difference again
+
+```{r}
+data.diff.12.diff.2 <-  diff(data.diff.12.diff.1, lag =1)
+var (data.diff.12.diff.2) #variance increace, no need to do a second difference
+```
+
+#De-trend = 1, Deseasonalize=1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+sarmia 12??
