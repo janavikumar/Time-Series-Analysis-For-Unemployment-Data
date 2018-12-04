@@ -1,0 +1,550 @@
+---
+title: "pstat174 project"
+author: "quanming huang"
+date: "11/19/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(MASS)
+library(forecast)
+library(ggplot2)
+library(astsa)
+library(tseries)
+library(GeneCycle)
+library(TSA)
+```
+
+```{r}
+setwd("/Users/kerwwwin/Desktop/pstat174")
+Data <- read.csv("Data.csv",sep=",", header=FALSE, skip=1)
+data<-Data[1:408,]
+head(data)
+```
+
+#let Unemployment be {Yt}
+```{r}
+ts.data <-ts(data[,2] ,start = c(1948,1),frequency=12)
+plot(ts.data, xlab= "Time" , ylab="Unemployment for Males" , main= "Monthly T.S plot for Monthly U.S. male (1948-1981 years) unemployment" )
+```
+
+
+# Seasonal Plot
+```{r}
+seasonplot(ts.data, 12, col=rainbow (3) , year.labels=TRUE, main= "Seasonal Plot")
+```
+
+#decomposition plot
+```{r}
+decom <-  decompose(ts.data)
+autoplot(decom, main= "Decomposition Plot" ) +
+theme ( axis.text.y = element_text(size =6), text = element_text(size=10)) +
+xlab ( "Time in years" )
+```
+
+#stablize variance using (box−cox,etc)
+```{r}
+t= 1:length(ts.data)
+data.box = boxcox(ts.data ~ t ,plotit=TRUE)
+lambda = data.box$x[which(data.box$y == max(data.box$y))]   #0.2626263
+ts.data.bc = ts.data^lambda
+```
+
+
+```{r}
+# Calculate the sample variance 
+var(ts.data) #68237.24
+```
+
+
+```{r}
+var(ts.data.bc)
+```
+transfomation reduce the variance
+
+
+# make sample set : drop last 12 data for later comparison of forecasting
+# plot the transformed time series
+```{r}
+ op <- par(mfrow = c(1,2))
+ts.plot(ts.data,main = "Original data",ylab = expression(X[t]))
+
+ts.data.minus.12 <- ts(ts.data.bc[1:(length(ts.data)-12)]) #408-12=396
+plot (ts.data.minus.12, xlab="Time", ylab="", main= expression( Unemployment^0.2626263)) 
+```
+
+
+#ACF/PACF of transformed data
+
+```{r} 
+acf(ts.data.minus.12, lag.max = 60, main= "" )
+title("Box-Cox Transformed Time Series", line = -1, outer=TRUE)
+```
+Notice that there are significant correlations with valuesmoving proportionally every 12 lags.Therefore, we can see that the period of the seasonal component is given by d = 12.
+
+
+#Remove the trend and seasonal components by differencing the transformed time series
+
+# Deseasonalize, our variance went down
+```{r}
+data.diff.12 <-  diff(ts.data.minus.12, lag=12)
+plot(data.diff.12,xlab="Time",main = "De-seanalized Time Series",
+     ylab = expression(nabla~Transformed_Data))
+abline(lm(data.diff.12~as.numeric(1:length(data.diff.12))))
+var(data.diff.12)   #0.07814674
+```
+
+
+
+# De-trend
+```{r}
+data.diff.12.diff.1 <- diff(data.diff.12, lag=1)
+ts.plot(data.diff.12.diff.1,main = "De-trended/seasonalized Time Series",ylab =expression(nabla~nabla^{12}~Y[t]))
+abline(lm(data.diff.12.diff.1~as.numeric(1:length(data.diff.12.diff.1))))
+var(data.diff.12.diff.1) # 0.03020707
+```
+#difference again
+
+```{r}
+data.diff.12.diff.2 <-  diff(data.diff.12.diff.1, lag=1)
+var(data.diff.12.diff.2)  #0.08078615
+#variance increace, no need to do a second difference
+```
+#De-trend = 1, Deseasonalize=1
+
+
+```{r}
+#using the Augmented Dickey-Fuller test to verify whether Xt is stationary or not.
+adf.test(data.diff.12.diff.1)
+```
+Null hypothesis is that Xt is non-stationary and the alternative hypothesis in the opposite
+
+p value is less than $\alpha$ =0.05 so we reject the null hypothesis and conclude that Xt is stationary at 95% confident interval.
+
+
+
+#Model Identification and Estimation
+```{r}
+#identify P and Q
+op<-par(mfrow=c(1,2))
+acf(data.diff.12.diff.1,lag.max = 60,main="")
+pacf(data.diff.12.diff.1,lag.max =60,main="")
+
+title (main="ACF and PACF of Deseasonalized Tansformed Data" ,outer=TRUE,line=-1)
+```
+
+#check value of acf and pacf at lag=k ,where =12,24,36.....
+#ACF: Q=1 or 0
+#pacf: P=0 or 1
+
+
+```{r}
+#identify p and q
+#zoom acf and pacf plot
+op<-par ( mfrow=c ( 1 , 2 ) )
+acf(data.diff.12.diff.1 ,lag.max=11,main="")
+pacf ( data.diff.12.diff.1 , lag.max=11,main="")
+title (main="ACF and PACF Plots for Lag Less Than 12" ,outer=TRUE, line=-1)
+par(op)
+```
+#check value of zoomed acf and pacf, at lag=1,2,3,4,....11
+#acf cut off after lag=0 or tail off, q=0
+#pacf cut off after lag=0 or tails off , p=2 or p=0
+
+#however we will test all combination of p, q in 0 to 2 to p and q which is with the smallest AIC and BIC value
+
+```{r}
+#Model selection by AICc 
+AICc<-numeric()
+for (p in 0:2){
+  for (q in 0:2){
+    AICc<-c(AICc,sarima(ts.data.minus.12,p,1,q,1,1,0,12,details = FALSE)$AICc)
+  }
+}
+AICc<-matrix(AICc,nrow=3,byrow = TRUE)
+rownames(AICc)<-c("p=0","p=1","p=2")
+colnames(AICc)<-c("q=0","q=1","q=2")
+AICc<-data.frame(AICc)
+aicc<-setNames(AICc,c("q=0","q=1","q=2"))
+aicc
+```
+#samllest
+p=0 and q=1 1st
+p=0 and q=2 2nd
+
+```{r}
+BIC<-numeric()
+for(p in 0:2) {
+  for (q in 0:2){
+    BIC<-c(BIC,sarima(ts.data.minus.12,p,1,q,1,1,0,12,details = FALSE)$BIC)
+  }
+}
+BIC<-matrix(BIC,nrow=3,byrow = TRUE)
+rownames(BIC)<-c("p=0","p=1","p=2")
+colnames(BIC)<-c("q=0","q=1","q=2")
+BIC<-data.frame(BIC)
+bic<-setNames(BIC,c("q=0","q=1","q=2"))
+bic
+```
+
+#smallest 
+p=0,q=1  1st
+p=0,q=2 2nd
+
+based on the AICc and BIC , select two model
+#model1, SARIMA(0,1,1,1,1,0)12
+```{r}
+#Fit and Estimation based on MLE method
+fit1 <-arima(ts.data.minus.12, order=c(0,1,1), seasonal=list(order=c(1,1,0),
+                                                             period=12),method="ML")
+fit1
+```
+```{r}
+source("plot.roots.R")
+plot.roots(NULL,polyroot(c(1,-0.3645 )),main="roots for MA part")
+plot.roots(NULL,polyroot(c(1,-0.4720)),main="roots for SMA part")
+```
+
+#Model2: SARIMA(0,1,2,1,1,0)12
+```{r}
+fit2 <-arima(ts.data.minus.12, order=c(0,1,2), seasonal=list(order=c(1,1,0),                                                      period=12),method="ML")
+fit2
+```
+
+```{r}
+source("plot.roots.R")
+plot.roots(NULL,polyroot(c(1,-0.3685,0.0086 )),main="roots for MA part")
+plot.roots(NULL,polyroot(c(1,-0.4712)),main="roots for SAR part")
+```
+
+
+
+
+
+
+
+
+
+
+
+##Disgnostics
+##Normality
+```{r}
+#resid for M
+op<-par(mfrow=c(2,2))
+resid1<-residuals(fit1) 
+resid2<-residuals(fit2)
+hist(resid1 ,main="Histogram of Residuals") #good
+qqnorm(resid1 , main="Normal Q−Q Plot for Model")
+qqline(resid1)
+
+hist(resid2 ,main="Histogram of Residuals") #good
+qqnorm(resid2 , main="Normal Q−Q Plot for Model")
+qqline(resid2)
+```
+
+
+
+
+H0 = residuals are normal
+H1 = residuals are not normal
+```{r}
+#Shapiro Test for Model 1 and 2
+Shap<-matrix(c(shapiro.test(resid1)$statistic 
+               ,shapiro.test(resid1)$p.value,
+               shapiro.test(resid2)$statistic 
+               ,shapiro.test(resid2)$p.value),nrow=2,byrow=T)
+#greater than 0.05 , then good
+rownames(Shap)<-c("Model1" ,"Model2")
+colnames(Shap)<-c("W Statisttic","P−value")
+(Shap<-data.frame (Shap))
+```
+As shown in Table the p-value > 0.05 for both model, therefore we do not reject the assumption of normality. The residuals for both model are approximately Gaussian.
+
+
+
+
+#Independence/Correlation diagnostics
+```{r}
+b1<-Box.test(resid1, lag = 12, type = "Box-Pierce", fitdf = 2)$p.value
+#Cor
+b2<-Box.test(resid1, lag = 12, type = "Ljung-Box", fitdf = 2)$p.value
+#Cor
+
+b3<-Box.test(resid2, lag = 12, type = "Box-Pierce", fitdf = 2)$p.value
+#Cor
+b4<-Box.test(resid2, lag = 12, type = "Ljung-Box", fitdf = 2)$p.value
+#Cor
+boxT<-matrix(c(b1,b2,b3,b4) ,nrow=2,byrow=FALSE)
+rownames(boxT)<-c("Box−Pierce","Ljung−Box")
+colnames(boxT)<-c("Model1 P−value" , "Model2 P−value")
+(boxT<-data.frame(boxT))
+```
+
+b1 #>0.05 good
+b2 #>0.05 good
+b3 #>0.05 
+b4 #>0.05
+
+```{r}
+#Test for constant variance of residuals
+par(mfrow=c(2 ,2) ) # acf
+acf(resid1, main = "ACF Plot of Residuals for Model 1" , lag.max=40) # pacf
+pacf(resid1,main="" , lag.max=40)
+
+title(main="PACF Plots of Residuals for Model 1",outer=FALSE,line=1) # acf
+
+acf(resid2, main = "ACF Plot of Residuals for Model 2" , lag.max=40) # pacf
+pacf(resid2,main="" , lag.max=40)
+title(main="PACF Plots of Residuals for Model 2",outer=FALSE,line=1) # acf
+```
+
+
+#because of the samlles AIC and BIC, we choose the model1
+```{r}
+pred.tr <-predict(fit1 ,n.ahead = 12)
+
+U.tr= pred.tr$pred+2*pred.tr$se # upper bound for the C. I . for transformed data
+
+L.tr= pred.tr$pred-2*pred.tr$se # lower bound
+ts.plot(ts.data.minus.12,xlim=c(1,length(ts.data.minus.12)+12),
+        main="Forcasting Based onTransform Data",ylab="")
+
+lines(U.tr,col="blue", lty="dashed")
+lines(L.tr,col="blue", lty="dashed")
+
+points((length(ts.data.minus.12)+1):(length(ts.data.minus.12)+12),pred.tr$pred, col="red")
+```
+
+
+```{r}
+pred.orig<-pred.tr$pred^(1/lambda)
+# back−transform to get predictions of original time series
+U= U.tr^(1/lambda) # bounds of the confidence intervals
+L=L.tr^(1/lambda)
+# Plot forecasts with original data
+ts.data2<-ts(data[ , 2 ] )
+ts.plot(ts.data2 , xlim=c(1,length(ts.data2)) ,main="Forcasting Based on Original Data",ylab="Billion Cubic Feet")
+lines(U, col="blue", lty="dashed")
+lines(L, col="blue", lty="dashed")
+points((length(ts.data.minus.12)+1):(length(ts.data.minus.12)+12), pred.orig ,col="red")
+```
+
+```{r}
+#zoom effect
+ts.plot(ts.data2 ,xlim=c(length(ts.data2)-20,length(ts.data2)),
+        main="Comparison between Observed Values and Forcasted
+        Values",ylab="Billion Cubic Feet")
+
+points((length(ts.data.minus.12)+1):(length(ts.data.minus.12)+12),
+       ts.data2[397:408], col="dark green")
+
+points((length(ts.data.minus.12)+1):(length(ts.data.minus.12)+12),pred.orig
+       ,col="red")
+lines((length(ts.data.minus.12)+1):(length(ts.data.minus.12)+12),U, lty=2,
+      col="blue") 
+lines((length(ts.data.minus.12)+1):(length(ts.data.minus.12)+12),L, lty=2, col="blue")
+
+```
+
+#close to observed value . within confidence interval , good forcasting
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+model for another P=0 and Q=1
+```{r}
+AICc1<-numeric()
+for (p in 0:2){
+  for (q in 0:2){
+    AICc1<-c(AICc1,sarima(ts.data.minus.12,p,1,q,0,1,1,12,details=FALSE)$AICc)
+  }
+}
+AICc1<-matrix(AICc1,nrow=3,byrow = TRUE)
+rownames(AICc1)<-c("p=0","p=1","p=2")
+colnames(AICc1)<-c("q=0","q=1","q=2")
+AICc1<-data.frame(AICc1)
+aicc1<-setNames(AICc1,c("q=0","q=1","q=2"))
+aicc1
+```
+
+
+```{r}
+#Fit and Estimation based on MLE method
+fit3 <-arima(ts.data.minus.12, order=c(0,1,1), seasonal=list(order=c(0,1,1),
+                                                             period=12),method="ML")
+fit3
+```
+```{r}
+op<-par(mfrow=c(1,2))
+source("plot.roots.R")
+plot.roots(NULL,polyroot(c(1,-0.3441)),main="roots for SMA part")
+plot.roots(NULL,polyroot(c(1,-0.7345)),main="roots for SMA part")
+```
+```{r}
+#Fit and Estimation based on MLE method
+fit4 <-arima(ts.data.minus.12, order=c(0,1,2), seasonal=list(order=c(0,1,1),
+                                                             period=12),method="ML")
+fit4
+```
+
+```{r}
+op<-par(mfrow=c(1,2))
+source("plot.roots.R")
+plot.roots(NULL,polyroot(c(1,-0.3339,-0.0255 )),main="roots for SMA part")
+plot.roots(NULL,polyroot(c(1, -0.7384)),main="roots for SMA part")
+```
+
+
+##Disgnostics
+##Normality
+```{r}
+#resid for M
+op<-par(mfrow=c(2,2))
+resid3<-residuals(fit3) 
+resid4<-residuals(fit4)
+hist(resid3 ,main="Histogram of Residuals") #good
+qqnorm(resid3 , main="Normal Q−Q Plot for Model")
+qqline(resid3)
+
+hist(resid4 ,main="Histogram of Residuals") #good
+qqnorm(resid4 , main="Normal Q−Q Plot for Model")
+qqline(resid4)
+```
+
+
+H0 = residuals are normal
+H1 = residuals are not normal
+```{r}
+#Shapiro Test for Model 3 and 4
+Shap2<-matrix(c(shapiro.test(resid3)$statistic ,
+               shapiro.test(resid3)$p.value,
+               shapiro.test(resid4)$statistic 
+               ,shapiro.test(resid4)$p.value),nrow=2,byrow=T)
+#greater than 0.05 , then good
+rownames(Shap2)<-c("Model3" ,"Model4")
+colnames(Shap2)<-c("W Statisttic","P−value")
+(Shap2<-data.frame (Shap2))
+```
+As shown in Table the p-value < 0.05 for both model, therefore we do reject the assumption of normality. The residuals for both model are not Gaussian.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+model for another P=1 and Q=1
+```{r}
+AICc2<-numeric()
+for (p in 0:2){
+  for (q in 0:2){
+    AICc2<-c(AICc2,sarima(ts.data.minus.12,p,1,q,1,1,1,12,details=FALSE)$AICc)
+  }
+}
+AICc2<-matrix(AICc2,nrow=3,byrow = TRUE)
+rownames(AICc2)<-c("p=0","p=1","p=2")
+colnames(AICc2)<-c("q=0","q=1","q=2")
+AICc2<-data.frame(AICc2)
+aicc2<-setNames(AICc2,c("q=0","q=1","q=2"))
+aicc2
+```
+
+smallest p=0,q=1
+p=1 and q=2
+
+
+
+```{r}
+#Fit and Estimation based on MLE method
+fit5 <-arima(ts.data.minus.12, order=c(0,1,1), seasonal=list(order=c(1,1,1),
+                                                             period=12),method="ML")
+fit5
+```
+
+```{r}
+op<-par(mfrow=c(1,3))
+source("plot.roots.R")
+plot.roots(NULL,polyroot(c(1,-0.3404,-0.0255 )),main="roots for MA part")
+plot.roots(NULL,polyroot(c(1,0.0584)),main="roots for SAR part")
+plot.roots(NULL,polyroot(c(1, -0.7676)),main="roots for SMA part")
+```
+
+```{r}
+#Fit and Estimation based on MLE method
+fit6 <-arima(ts.data.minus.12, order=c(1,1,2), seasonal=list(order=c(1,1,1),                                                            period=12),method="ML")
+fit6
+```
+
+```{r}
+op<-par(mfrow=c(2,2))
+source("plot.roots.R")
+plot.roots(NULL,polyroot(c(1,-0.1514  )),main="roots for AR part")
+plot.roots(NULL,polyroot(c(1,-0.1799,-0.0757 )),main="roots for MA part")
+plot.roots(NULL,polyroot(c(1,0.0555)),main="roots for SAR part")
+plot.roots(NULL,polyroot(c(1, -0.7691)),main="roots for SMA part")
+```
+
+
+##Disgnostics
+##Normality
+```{r}
+#resid for M
+op<-par(mfrow=c(2,2))
+resid5<-residuals(fit5) 
+resid6<-residuals(fit6)
+hist(resid5 ,main="Histogram of Residuals") #good
+qqnorm(resid5 , main="Normal Q−Q Plot for Model5")
+qqline(resid5)
+
+hist(resid6 ,main="Histogram of Residuals") #good
+qqnorm(resid6 , main="Normal Q−Q Plot for Model6")
+qqline(resid6)
+```
+
+
+
+```{r}
+#Shapiro Test for Model 5 and 6
+Shap3<-matrix(c(shapiro.test(resid5)$statistic ,
+               shapiro.test(resid5)$p.value,
+               shapiro.test(resid6)$statistic 
+               ,shapiro.test(resid6)$p.value),nrow=2,byrow=T)
+#greater than 0.05 , then good
+rownames(Shap3)<-c("Model5" ,"Model6")
+colnames(Shap3)<-c("W Statisttic","P−value")
+(Shap3<-data.frame (Shap3))
+```
+
+
+As shown in Table the p-value < 0.05 for both model, therefore we do reject the assumption of normality. The residuals for both model are not Gaussian.
